@@ -54,6 +54,49 @@ class _PlayerSourcesPanelState extends State<PlayerSourcesPanel> {
   int _activeBitrateProbes = 0;
   static const int _maxConcurrentBitrateProbes = 4;
 
+  // Active sort for the source list ('default' keeps arrival order)
+  String _selectedSort = 'default'; // 'default', 'bitrate', 'seeders', 'size_largest'
+
+  // Bitrate used for sorting: parsed from the title, resolved from the HLS
+  // manifest, or estimated from size/runtime — same value the card badge shows.
+  int? _effectiveBitrateKbps(StreamSource s) {
+    return s.bitrateKbps ??
+        _resolvedBitrates[s.url] ??
+        s.estimatedBitrateKbps(int.tryParse(widget.detail?.runtime ?? ''));
+  }
+
+  // Copy of the current list reordered by the active sort.
+  List<StreamSource> get _sortedSources {
+    final list = List<StreamSource>.from(_sources);
+    switch (_selectedSort) {
+      case 'bitrate':
+        // Sources without any bitrate figure sink to the bottom.
+        list.sort((a, b) {
+          final brA = _effectiveBitrateKbps(a);
+          final brB = _effectiveBitrateKbps(b);
+          if (brA == null && brB == null) return b.qualityRank.compareTo(a.qualityRank);
+          if (brA == null) return 1;
+          if (brB == null) return -1;
+          final cmp = brB.compareTo(brA);
+          if (cmp != 0) return cmp;
+          return b.qualityRank.compareTo(a.qualityRank);
+        });
+      case 'seeders':
+        list.sort((a, b) {
+          final cmp = (b.seeders ?? 0).compareTo(a.seeders ?? 0);
+          if (cmp != 0) return cmp;
+          return b.qualityRank.compareTo(a.qualityRank);
+        });
+      case 'size_largest':
+        list.sort((a, b) {
+          final cmp = (b.sizeBytes ?? 0).compareTo(a.sizeBytes ?? 0);
+          if (cmp != 0) return cmp;
+          return b.qualityRank.compareTo(a.qualityRank);
+        });
+    }
+    return list;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -282,6 +325,9 @@ class _PlayerSourcesPanelState extends State<PlayerSourcesPanel> {
 
                 const Divider(height: 1, color: Color(0x1AFFFFFF)),
 
+                // ── Sort Chips ──
+                if (_sources.isNotEmpty) _buildSortChipRow(),
+
                 // ── Sources List / Loading / Empty State ──
                 Expanded(
                   child: _sources.isEmpty && _isLoading
@@ -496,17 +542,73 @@ class _PlayerSourcesPanelState extends State<PlayerSourcesPanel> {
     );
   }
 
+  Widget _buildSortChipRow() {
+    const options = [
+      ('default', 'Default'),
+      ('bitrate', 'Bitrate'),
+      ('seeders', 'Seeders'),
+      ('size_largest', 'Size'),
+    ];
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+      child: SizedBox(
+        height: 28,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          children: [
+            for (final (value, label) in options) ...[
+              _buildSortChip(value, label),
+              const SizedBox(width: 6),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSortChip(String value, String label) {
+    final isSelected = _selectedSort == value;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedSort = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isSelected
+              ? PlayerTheme.accent.withValues(alpha: 0.18)
+              : Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSelected
+                ? PlayerTheme.accent.withValues(alpha: 0.45)
+                : Colors.white.withValues(alpha: 0.10),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? const Color(0xFF9D84FF) : Colors.white70,
+            fontSize: 11,
+            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSourcesList(bool isCompact) {
+    final sources = _sortedSources;
     return ListView.separated(
       physics: const BouncingScrollPhysics(),
       padding: EdgeInsets.symmetric(
         horizontal: isCompact ? 12 : 16,
         vertical: 14,
       ),
-      itemCount: _sources.length + (_isLoading ? 1 : 0),
+      itemCount: sources.length + (_isLoading ? 1 : 0),
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
-        if (index == _sources.length && _isLoading) {
+        if (index == sources.length && _isLoading) {
           return Container(
             padding: const EdgeInsets.all(12),
             alignment: Alignment.center,
@@ -534,7 +636,7 @@ class _PlayerSourcesPanelState extends State<PlayerSourcesPanel> {
           );
         }
 
-        final source = _sources[index];
+        final source = sources[index];
         final isHovered = _hoveredIndex == index;
 
         return _buildSourceCard(source, index, isHovered, isCompact);
@@ -674,6 +776,28 @@ class _PlayerSourcesPanelState extends State<PlayerSourcesPanel> {
                               ),
                             ),
                           ),
+
+                          if (source.audioChannels != null) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                              margin: const EdgeInsets.only(right: 6),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF22B8CF).withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(
+                                  color: const Color(0xFF22B8CF).withValues(alpha: 0.35),
+                                ),
+                              ),
+                              child: Text(
+                                source.audioChannels!,
+                                style: const TextStyle(
+                                  color: Color(0xFF22B8CF),
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
 
                           if (bitrateKbps != null) ...[
                             Container(
