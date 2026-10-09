@@ -273,6 +273,15 @@ class _WatchScreenState extends State<WatchScreen>
   String _selectedTypeFilter = 'all'; // 'all', 'debrid', 'torrent', 'direct'
   String _selectedSeederFilter = 'all'; // 'all', 'most', '50+', '20+', '5+', '1+'
   String _selectedAudioFilter = 'all'; // 'all', 'multi', 'english', 'hindi', 'german', 'french', 'spanish', 'spanish_castilian', 'spanish_latino', 'russian', 'japanese', 'italian'
+  String _selectedSort = 'default'; // 'default', 'bitrate', 'quality', 'seeders', 'size_largest', 'size_smallest'
+
+  // Bitrate used for sorting: parsed from the title, resolved from the HLS
+  // manifest, or estimated from size/runtime — same value the card badge shows.
+  int? _effectiveBitrateKbps(StreamSource s) {
+    return s.bitrateKbps ??
+        _resolvedBitrates[s.url] ??
+        s.estimatedBitrateKbps(int.tryParse(widget.detail.runtime ?? ''));
+  }
 
   List<StreamSource> get _filteredSources {
     var list = List<StreamSource>.from(_sources);
@@ -350,6 +359,52 @@ class _WatchScreenState extends State<WatchScreen>
     // Cached dynamic addon priority lookup from user's installed addons order
     final addonOrder = _addonOrder;
     final isCustomBuiltin = BuiltinProvidersSettingsService.instance.isCustom;
+
+    // An explicit sort reorders the whole list across addons; 'default' keeps
+    // the addon-grouped ordering below.
+    switch (_selectedSort) {
+      case 'bitrate':
+        // Sources without any bitrate figure sink to the bottom.
+        list.sort((a, b) {
+          final brA = _effectiveBitrateKbps(a);
+          final brB = _effectiveBitrateKbps(b);
+          if (brA == null && brB == null) return b.qualityRank.compareTo(a.qualityRank);
+          if (brA == null) return 1;
+          if (brB == null) return -1;
+          final cmp = brB.compareTo(brA);
+          if (cmp != 0) return cmp;
+          return b.qualityRank.compareTo(a.qualityRank);
+        });
+        return list;
+      case 'quality':
+        list.sort((a, b) {
+          final cmp = b.qualityRank.compareTo(a.qualityRank);
+          if (cmp != 0) return cmp;
+          return (b.seeders ?? 0).compareTo(a.seeders ?? 0);
+        });
+        return list;
+      case 'seeders':
+        list.sort((a, b) {
+          final cmp = (b.seeders ?? 0).compareTo(a.seeders ?? 0);
+          if (cmp != 0) return cmp;
+          return b.qualityRank.compareTo(a.qualityRank);
+        });
+        return list;
+      case 'size_largest':
+        list.sort((a, b) {
+          final cmp = (b.sizeBytes ?? 0).compareTo(a.sizeBytes ?? 0);
+          if (cmp != 0) return cmp;
+          return b.qualityRank.compareTo(a.qualityRank);
+        });
+        return list;
+      case 'size_smallest':
+        list.sort((a, b) {
+          final cmp = (a.sizeBytes ?? double.infinity).compareTo(b.sizeBytes ?? double.infinity);
+          if (cmp != 0) return cmp;
+          return b.qualityRank.compareTo(a.qualityRank);
+        });
+        return list;
+    }
 
     list.sort((a, b) {
       final isHttpA = a.addonName.toLowerCase() == 'playtorriohttp';
@@ -436,6 +491,23 @@ class _WatchScreenState extends State<WatchScreen>
         return 'Smallest';
       default:
         return 'All Sizes';
+    }
+  }
+
+  String _getSortLabel(String sort) {
+    switch (sort) {
+      case 'bitrate':
+        return 'Bitrate (High to Low)';
+      case 'quality':
+        return 'Quality (4K → SD)';
+      case 'seeders':
+        return 'Seeders (High to Low)';
+      case 'size_largest':
+        return 'Size (Largest First)';
+      case 'size_smallest':
+        return 'Size (Smallest First)';
+      default:
+        return 'Default Order';
     }
   }
 
@@ -690,6 +762,7 @@ class _WatchScreenState extends State<WatchScreen>
                           _buildSizeFilterDropdown(),
                           _buildAddonFilterDropdown(),
                           _buildAudioFilterDropdown(),
+                          _buildSortDropdown(),
                         ],
                       ),
                     ],
@@ -1275,6 +1348,7 @@ class _WatchScreenState extends State<WatchScreen>
               _buildSizeFilterDropdown(),
               _buildAddonFilterDropdown(),
               _buildAudioFilterDropdown(),
+              _buildSortDropdown(),
             ],
           ),
           const SizedBox(height: 12),
@@ -1566,6 +1640,320 @@ class _WatchScreenState extends State<WatchScreen>
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSortDropdown() {
+    final currentText = _getSortLabel(_selectedSort);
+    final isActive = _selectedSort != 'default';
+
+    return Builder(
+      builder: (buttonContext) {
+        return GestureDetector(
+          onTap: () => _isDesktop()
+              ? _showSortGlassDropdown(buttonContext)
+              : _showSortBottomSheet(),
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              borderRadius: BorderRadius.all(Radius.circular(18)),
+              boxShadow: [
+                BoxShadow(
+                  color: Color(0x40000000),
+                  blurRadius: 10,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: PerformanceLiquidLens(
+              style: PerformanceGlassStyles.menuButton,
+              child: Container(
+                height: 36,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: isActive
+                        ? const Color(0xFFF59E0B).withValues(alpha: 0.6)
+                        : const Color(0x26FFFFFF),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.sort_rounded,
+                      color: isActive ? const Color(0xFFF59E0B) : Colors.white70,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      currentText,
+                      style: TextStyle(
+                        color: isActive ? const Color(0xFFF59E0B) : Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(
+                      Icons.arrow_drop_down,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showSortGlassDropdown(BuildContext buttonContext) {
+    final RenderBox button = buttonContext.findRenderObject() as RenderBox;
+    final RenderBox overlay =
+        Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+    final Offset buttonOffset = button.localToGlobal(
+      Offset.zero,
+      ancestor: overlay,
+    );
+    const double dialogWidth = 230.0;
+    final double spaceBelow = overlay.size.height - (buttonOffset.dy + button.size.height + 8) - 16;
+    final double spaceAbove = buttonOffset.dy - 16;
+    final bool openAbove = spaceBelow < 280 && spaceAbove > spaceBelow;
+
+    final double maxMenuHeight = (openAbove ? spaceAbove : spaceBelow).clamp(160.0, 420.0);
+    final double? topOffset = openAbove ? null : (buttonOffset.dy + button.size.height + 8);
+    final double? bottomOffset = openAbove ? (overlay.size.height - buttonOffset.dy + 8) : null;
+
+    final double rawLeft = buttonOffset.dx;
+    final double maxLeft = overlay.size.width - dialogWidth - 12.0;
+    final double leftOffset = rawLeft.clamp(12.0, maxLeft > 12.0 ? maxLeft : 12.0);
+
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Dismiss',
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 250),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return Stack(
+          children: [
+            Positioned(
+              top: topOffset,
+              bottom: bottomOffset,
+              left: leftOffset,
+              child: Material(
+                color: Colors.transparent,
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0.0, end: 1.0),
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOut,
+                  builder: (context, value, child) {
+                    return Transform.translate(
+                      offset: Offset(0, (openAbove ? 10 : -10) * (1 - value)),
+                      child: Opacity(
+                        opacity: value.clamp(0.0, 1.0),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      borderRadius: BorderRadius.all(Radius.circular(16)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Color(0x99000000),
+                          blurRadius: 18,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: PerformanceLiquidLens(
+                      style: PerformanceGlassStyles.menu,
+                      child: Container(
+                        width: dialogWidth,
+                        constraints: BoxConstraints(maxHeight: maxMenuHeight),
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0x26FFFFFF)),
+                        ),
+                        child: SingleChildScrollView(
+                          physics: const BouncingScrollPhysics(),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildSortDropdownItem('Default Order', 'default'),
+                              _buildSortDropdownItem('Bitrate (High to Low)', 'bitrate'),
+                              _buildSortDropdownItem('Quality (4K → SD)', 'quality'),
+                              _buildSortDropdownItem('Seeders (High to Low)', 'seeders'),
+                              _buildSortDropdownItem('Size (Largest First)', 'size_largest'),
+                              _buildSortDropdownItem('Size (Smallest First)', 'size_smallest'),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSortDropdownItem(String title, String value) {
+    final isSelected = _selectedSort == value;
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _selectedSort = value;
+        });
+        Navigator.pop(context);
+      },
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: isSelected
+              ? Colors.white.withValues(alpha: 0.1)
+              : Colors.transparent,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.white70,
+                  fontSize: 14,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                ),
+              ),
+            ),
+            if (isSelected)
+              const Icon(Icons.check_circle, color: Color(0xFFF59E0B), size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showSortBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return _buildGlassBottomSheetContainer(
+          context: context,
+          header: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.sort_rounded,
+                  color: Color(0xFFF59E0B),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Sort Sources',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white54, size: 20),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.55,
+            ),
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildBottomSheetItem(
+                    title: 'Default Order',
+                    isSelected: _selectedSort == 'default',
+                    activeColor: const Color(0xFFF59E0B),
+                    onTap: () {
+                      setState(() => _selectedSort = 'default');
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                  _buildBottomSheetItem(
+                    title: 'Bitrate (High to Low)',
+                    isSelected: _selectedSort == 'bitrate',
+                    activeColor: const Color(0xFFF59E0B),
+                    onTap: () {
+                      setState(() => _selectedSort = 'bitrate');
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                  _buildBottomSheetItem(
+                    title: 'Quality (4K → SD)',
+                    isSelected: _selectedSort == 'quality',
+                    activeColor: const Color(0xFFF59E0B),
+                    onTap: () {
+                      setState(() => _selectedSort = 'quality');
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                  _buildBottomSheetItem(
+                    title: 'Seeders (High to Low)',
+                    isSelected: _selectedSort == 'seeders',
+                    activeColor: const Color(0xFFF59E0B),
+                    onTap: () {
+                      setState(() => _selectedSort = 'seeders');
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                  _buildBottomSheetItem(
+                    title: 'Size (Largest First)',
+                    isSelected: _selectedSort == 'size_largest',
+                    activeColor: const Color(0xFFF59E0B),
+                    onTap: () {
+                      setState(() => _selectedSort = 'size_largest');
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                  _buildBottomSheetItem(
+                    title: 'Size (Smallest First)',
+                    isSelected: _selectedSort == 'size_smallest',
+                    activeColor: const Color(0xFFF59E0B),
+                    onTap: () {
+                      setState(() => _selectedSort = 'size_smallest');
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -2894,6 +3282,7 @@ class _SourceCardState extends State<_SourceCard> {
 
     if (s.isHDR) badges.add(_badge('HDR', const Color(0xFFFFD43B)));
     if (s.codec != null) badges.add(_badge(s.codec!, _C.textTertiary));
+    if (s.audioChannels != null) badges.add(_badge(s.audioChannels!, const Color(0xFF22B8CF)));
 
     // Bitrate: parsed from the title, resolved from the HLS manifest for
     // direct streams, or estimated from size/runtime as a last resort.
