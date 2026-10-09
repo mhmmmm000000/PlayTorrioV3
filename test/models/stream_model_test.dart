@@ -37,6 +37,36 @@ void main() {
         expect(source.codec, anyOf('AVC', 'H.264', 'x264'));
       });
     });
+    group('audio channels detection', () {
+      test('detects 5.1 glued to an audio codec tag', () {
+        final source = StreamSource(addonName: 'Torrentio', title: 'Movie.2024.1080p.WEB-DL.DDP5.1.Atmos.H.264', url: 'https://example.com');
+        expect(source.audioChannels, '5.1');
+      });
+      test('detects 7.1 with TrueHD', () {
+        final source = StreamSource(addonName: 'Torrentio', title: 'Movie.2024.2160p.BluRay.TrueHD.7.1.Atmos.HEVC', url: 'https://example.com');
+        expect(source.audioChannels, '7.1');
+      });
+      test('detects stereo 2.0', () {
+        final source = StreamSource(addonName: 'Torrentio', title: 'Show.S01E02.720p.WEB-DL.AAC2.0.H.264', url: 'https://example.com');
+        expect(source.audioChannels, '2.0');
+      });
+      test('returns null when no layout is present', () {
+        final source = StreamSource(addonName: 'Torrentio', title: 'Movie.2024.1080p.WEB-DL.HEVC', url: 'https://example.com');
+        expect(source.audioChannels, isNull);
+      });
+      test('does not match the 10bit depth string', () {
+        final source = StreamSource(addonName: 'Torrentio', title: 'Movie.2024.2160p.WEB-DL.x265.10bit.HEVC', url: 'https://example.com');
+        expect(source.audioChannels, isNull);
+      });
+      test('does not match a size like 5.1GB', () {
+        final source = StreamSource(addonName: 'Torrentio', title: 'Movie.2024.1080p.5.1GB.WEB-DL.x264', url: 'https://example.com');
+        expect(source.audioChannels, isNull);
+      });
+      test('does not match a version like v2.0', () {
+        final source = StreamSource(addonName: 'Torrentio', title: 'Movie.2024.1080p.WEB-DL.v2.0.x264', url: 'https://example.com');
+        expect(source.audioChannels, isNull);
+      });
+    });
     group('qualityRank', () {
       test('4K ranks higher than 1080p', () {
         final fourK = StreamSource(addonName: 'TestAddon', name: 'A', title: '4K.Movie.mkv\nA', url: '');
