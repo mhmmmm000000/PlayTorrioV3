@@ -352,6 +352,23 @@ class StreamSource {
     return _cachedCodec = null;
   }
 
+  static final RegExp _audioChannelsRegex = RegExp(
+    r'(?<![0-9vV])(2\.0|2\.1|4\.0|5\.1|6\.1|7\.1|7\.2|9\.1)(?![0-9])(?!\s*(?:gb|gib|mb|mib|tb|kb))',
+    caseSensitive: false,
+  );
+
+  String? _cachedAudioChannels;
+  bool _audioChannelsComputed = false;
+  /// Extract audio channel layout (e.g. 5.1, 7.1) if mentioned in title or name.
+  /// Sizes like "5.1GB" and codec strings like "x265.10bit" are not layouts.
+  String? get audioChannels {
+    if (_audioChannelsComputed) return _cachedAudioChannels;
+    _audioChannelsComputed = true;
+    final text = '${title ?? ''} ${name ?? ''}';
+    final match = _audioChannelsRegex.firstMatch(text);
+    return _cachedAudioChannels = match?.group(1)?.toLowerCase();
+  }
+
   String? _cachedFileSize;
   bool _fileSizeComputed = false;
   /// Extract file size string if mentioned in title, name, or description.
